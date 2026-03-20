@@ -39,27 +39,33 @@ async function resolveLogoData(lance) {
 
   if (logoDataCache.has(key)) return logoDataCache.get(key);
 
+  const candidates = [key];
+  if (key.includes('_AND_')) candidates.push(key.replaceAll('_AND_', '_'));
+  if (key.endsWith('_AND')) candidates.push(key.slice(0, -4));
+
   const map = await logoMapPromise;
-  const relPath = map[key] || `assets/lance-logos/${key}.png`;
-  try {
-    const res = await fetch(`./${relPath}`);
-    if (!res.ok) {
-      logoDataCache.set(key, '');
-      return '';
+
+  for (const cand of candidates) {
+    const relPath = map[cand] || `assets/lance-logos/${cand}.png`;
+    try {
+      const res = await fetch(`./${relPath}`);
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      const dataUri = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      logoDataCache.set(key, dataUri);
+      return dataUri;
+    } catch {
+      // try next candidate
     }
-    const blob = await res.blob();
-    const dataUri = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    logoDataCache.set(key, dataUri);
-    return dataUri;
-  } catch {
-    logoDataCache.set(key, '');
-    return '';
   }
+
+  logoDataCache.set(key, '');
+  return '';
 }
 
 function trimToWordLimit(text, maxWords = 145) {

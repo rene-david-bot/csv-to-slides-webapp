@@ -67,15 +67,22 @@ def resolve_logo_path(lance: str, logo_map: Dict[str, str]) -> Path | None:
     if not key:
         return None
 
-    mapped = logo_map.get(key)
-    if mapped:
-        p = (REPO_ROOT / mapped).resolve()
-        if p.exists() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-            return p
+    candidates = [key]
+    if "_AND_" in key:
+        candidates.append(key.replace("_AND_", "_"))
+    if key.endswith("_AND"):
+        candidates.append(key[: -len("_AND")])
 
-    direct = LOGO_DIR / f"{key}.png"
-    if direct.exists():
-        return direct
+    for cand in candidates:
+        mapped = logo_map.get(cand)
+        if mapped:
+            p = (REPO_ROOT / mapped).resolve()
+            if p.exists() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+                return p
+
+        direct = LOGO_DIR / f"{cand}.png"
+        if direct.exists():
+            return direct
 
     return None
 
