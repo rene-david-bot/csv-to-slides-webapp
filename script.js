@@ -35,7 +35,7 @@ function normalizeLanceKey(value) {
 
 async function resolveLogoData(lance) {
   const key = normalizeLanceKey(lance);
-  if (!key) return '';
+  if (!key) return null;
 
   if (logoDataCache.has(key)) return logoDataCache.get(key);
 
@@ -57,15 +57,24 @@ async function resolveLogoData(lance) {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      logoDataCache.set(key, dataUri);
-      return dataUri;
+
+      const dims = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.naturalWidth || img.width || 1, height: img.naturalHeight || img.height || 1 });
+        img.onerror = reject;
+        img.src = dataUri;
+      });
+
+      const out = { data: dataUri, width: dims.width, height: dims.height };
+      logoDataCache.set(key, out);
+      return out;
     } catch {
       // try next candidate
     }
   }
 
-  logoDataCache.set(key, '');
-  return '';
+  logoDataCache.set(key, null);
+  return null;
 }
 
 function trimToWordLimit(text, maxWords = 145) {
@@ -328,14 +337,19 @@ async function generateDeck() {
       });
 
       const logoData = await resolveLogoData(lance);
-      if (logoData) {
+      if (logoData?.data) {
+        const scale = Math.min(logoW / logoData.width, headerH / logoData.height);
+        const drawW = logoData.width * scale;
+        const drawH = logoData.height * scale;
+        const drawX = logoX + (logoW - drawW) / 2;
+        const drawY = margin + (headerH - drawH) / 2;
+
         slide.addImage({
-          data: logoData,
-          x: logoX,
-          y: margin,
-          w: logoW,
-          h: headerH,
-          sizing: { type: 'contain', x: logoX, y: margin, w: logoW, h: headerH }
+          data: logoData.data,
+          x: drawX,
+          y: drawY,
+          w: drawW,
+          h: drawH
         });
       }
 
