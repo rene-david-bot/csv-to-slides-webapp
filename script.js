@@ -69,6 +69,14 @@ function trimToWordLimit(text, maxWords = 145) {
   return text.slice(0, cutAt).trim().replace(/[,:;\-]+$/, '') + '…';
 }
 
+function decodeHtmlEntities(value) {
+  const str = String(value || '');
+  if (!str.includes('&')) return str;
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = str;
+  return textarea.value;
+}
+
 function parseSemicolonCSV(input) {
   const rows = [];
   let row = [];
@@ -291,7 +299,7 @@ async function generateDeck() {
     for (const row of rows) {
       const projectId = pick(row, ['Id', 'ID', 'id']);
       const title = pick(row, ['Title']) || '(Untitled)';
-      const lance = pick(row, ['Associated Lance', 'Associated Lances', 'Associated Lens']) || '-';
+      const lance = decodeHtmlEntities(pick(row, ['Associated Lance', 'Associated Lances', 'Associated Lens']) || '-').trim() || '-';
       const deliverable = pick(row, ['Associated Deliverable', 'Deliverable']) || '-';
       const publicationDate = formatDate(pick(row, ['Publication Date', 'Date'])) || '-';
       const bodyRaw = cleanHtmlText(pick(row, ['Text', 'Description', 'Body']));

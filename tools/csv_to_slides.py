@@ -317,7 +317,7 @@ def render_slide(prs: Presentation, row: Dict[str, str], logo_map: Dict[str, str
 
     project_id = get_field(row, "Id", "ID", "id")
     title = get_field(row, "Title") or "(Untitled)"
-    lens = get_field(row, "Associated Lance", "Associated Lens", "Lens") or "-"
+    lens = html.unescape(get_field(row, "Associated Lance", "Associated Lens", "Lens")).strip() or "-"
     deliverable = get_field(row, "Associated Deliverable", "Deliverable") or "-"
     publication_date = parse_date(get_field(row, "Publication Date", "Date")) or "-"
     body = clean_html_text(get_field(row, "Text", "Description", "Body"))
