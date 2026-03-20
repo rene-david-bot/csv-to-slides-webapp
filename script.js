@@ -10,6 +10,8 @@ const STOPWORDS = new Set([
 ]);
 
 const tokenRegex = /[A-Za-zÀ-ÖØ-öø-ÿ0-9']+/g;
+const logoMapPromise = fetch('./assets/lance-logos/logo-map.json').then(r => r.ok ? r.json() : {}).catch(() => ({}));
+const logoDataCache = new Map();
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
@@ -19,6 +21,45 @@ function setStatus(text, isError = false) {
 function sanitizeFilename(name) {
   const base = (name || 'news-slides.pptx').trim().replace(/[^a-zA-Z0-9._-]/g, '-');
   return base.toLowerCase().endsWith('.pptx') ? base : `${base}.pptx`;
+}
+
+function normalizeLanceKey(value) {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/&/g, 'AND')
+    .replace(/[‐‑–—]/g, '-')
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+async function resolveLogoData(lance) {
+  const key = normalizeLanceKey(lance);
+  if (!key) return '';
+
+  if (logoDataCache.has(key)) return logoDataCache.get(key);
+
+  const map = await logoMapPromise;
+  const relPath = map[key] || `assets/lance-logos/${key}.png`;
+  try {
+    const res = await fetch(`./${relPath}`);
+    if (!res.ok) {
+      logoDataCache.set(key, '');
+      return '';
+    }
+    const blob = await res.blob();
+    const dataUri = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    logoDataCache.set(key, dataUri);
+    return dataUri;
+  } catch {
+    logoDataCache.set(key, '');
+    return '';
+  }
 }
 
 function trimToWordLimit(text, maxWords = 145) {
@@ -238,9 +279,13 @@ async function generateDeck() {
     const rightW = columnsW - leftW;
     const xLeft = margin;
     const xRight = xLeft + leftW + gap;
-    const titleH = 1.15;
+    const headerH = 0.92;
+    const titleRatio = 0.80;
+    const titleW = fullContentW * titleRatio;
+    const logoW = fullContentW - titleW;
+    const logoX = xLeft + titleW;
     const metaH = 0.95;
-    const contentY = margin + titleH + metaH + 0.12;
+    const contentY = margin + headerH + metaH + 0.12;
     const contentH = slideH - contentY - margin;
 
     for (const row of rows) {
@@ -255,12 +300,12 @@ async function generateDeck() {
       const slide = pptx.addSlide();
       slide.background = { color: '000000' };
 
-      // Title across full width
+      // Header: title (left 80%) + logo (right 20%)
       slide.addText(title, {
         x: xLeft,
         y: margin,
-        w: fullContentW,
-        h: titleH,
+        w: titleW,
+        h: headerH,
         fontSize: dynamicTitleSize(title),
         bold: true,
         color: 'FFFFFF',
@@ -268,10 +313,22 @@ async function generateDeck() {
         align: 'left'
       });
 
+      const logoData = await resolveLogoData(lance);
+      if (logoData) {
+        slide.addImage({
+          data: logoData,
+          x: logoX,
+          y: margin,
+          w: logoW,
+          h: headerH,
+          sizing: { type: 'contain', x: logoX, y: margin, w: logoW, h: headerH }
+        });
+      }
+
       // Metadata
       slide.addText(`Associated Lance: ${lance}`, {
         x: xLeft,
-        y: margin + titleH,
+        y: margin + headerH,
         w: leftW,
         h: 0.27,
         fontSize: 12,
@@ -291,7 +348,7 @@ async function generateDeck() {
         }
       ], {
         x: xLeft,
-        y: margin + titleH + 0.3,
+        y: margin + headerH + 0.3,
         w: leftW,
         h: 0.27,
         fontSize: 12,
@@ -300,7 +357,7 @@ async function generateDeck() {
 
       slide.addText(`Publication Date: ${publicationDate}`, {
         x: xLeft,
-        y: margin + titleH + 0.6,
+        y: margin + headerH + 0.6,
         w: leftW,
         h: 0.27,
         fontSize: 12,
