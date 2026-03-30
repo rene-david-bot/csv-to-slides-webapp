@@ -100,13 +100,16 @@ def fit_inside(box_w: int, box_h: int, img_w: int, img_h: int):
     return x, y, w, h
 
 
-def format_deliverable(deliverable: str, deliverable_type: str) -> str:
+def format_deliverable(deliverable: str, deliverable_type: str, fallback_id: str) -> str:
     d = (deliverable or "").strip()
     t = (deliverable_type or "").strip()
-    if d and t:
-        return f"{d} ({t})"
-    if d:
-        return d
+    fid = (fallback_id or "").strip()
+    base = d or fid
+
+    if base and t:
+        return f"{base} ({t})"
+    if base:
+        return base
     if t:
         return f"({t})"
     return "-"
@@ -378,7 +381,7 @@ def render_slide(
     lens = html.unescape(get_field(row, "Associated Lance", "Associated Lens", "Lens")).strip() or "-"
     deliverable = get_field(row, "Associated Deliverable", "Deliverable")
     deliverable_type = get_field(row, "Deliverable Type", "Type")
-    deliverable_text = format_deliverable(deliverable, deliverable_type)
+    deliverable_text = format_deliverable(deliverable, deliverable_type, project_id)
     cover_url = get_field(row, "Cover", "Image", "Cover URL")
     publication_date = parse_date(get_field(row, "Publication Date", "Date")) or "-"
     body = clean_html_text(get_field(row, "Text", "Description", "Body"))

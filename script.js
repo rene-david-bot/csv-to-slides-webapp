@@ -78,11 +78,13 @@ async function resolveLogoData(lance) {
   return null;
 }
 
-function formatDeliverableText(deliverable, deliverableType) {
+function formatDeliverableText(deliverable, deliverableType, fallbackId) {
   const d = String(deliverable || '').trim();
   const t = String(deliverableType || '').trim();
-  if (d && t) return `${d} (${t})`;
-  if (d) return d;
+  const fid = String(fallbackId || '').trim();
+  const base = d || fid;
+  if (base && t) return `${base} (${t})`;
+  if (base) return base;
   if (t) return `(${t})`;
   return '-';
 }
@@ -361,7 +363,7 @@ async function generateDeck() {
       const lance = decodeHtmlEntities(pick(row, ['Associated Lance', 'Associated Lances', 'Associated Lens']) || '-').trim() || '-';
       const deliverable = pick(row, ['Associated Deliverable', 'Deliverable']);
       const deliverableType = pick(row, ['Deliverable Type', 'Type']);
-      const deliverableText = formatDeliverableText(deliverable, deliverableType);
+      const deliverableText = formatDeliverableText(deliverable, deliverableType, projectId);
       const coverUrl = pick(row, ['Cover', 'Image', 'Cover URL']);
       const publicationDate = formatDate(pick(row, ['Publication Date', 'Date'])) || '-';
       const bodyRaw = cleanHtmlText(pick(row, ['Text', 'Description', 'Body']));
