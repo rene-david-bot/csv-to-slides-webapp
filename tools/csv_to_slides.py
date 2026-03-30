@@ -16,8 +16,11 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
 from PIL import Image
@@ -37,6 +40,8 @@ MID_GRAY = RGBColor(0x55, 0x55, 0x55)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
+if not (REPO_ROOT / "assets" / "lance-logos").exists() and (REPO_ROOT / "csv-to-slides-webapp" / "assets" / "lance-logos").exists():
+    REPO_ROOT = REPO_ROOT / "csv-to-slides-webapp"
 LOGO_DIR = REPO_ROOT / "assets" / "lance-logos"
 LOGO_MAP_PATH = LOGO_DIR / "logo-map.json"
 
@@ -96,6 +101,50 @@ def fit_inside(box_w: int, box_h: int, img_w: int, img_h: int):
     x = int((box_w - w) / 2)
     y = int((box_h - h) / 2)
     return x, y, w, h
+
+
+def format_deliverable(deliverable: str, deliverable_type: str) -> str:
+    d = (deliverable or "").strip()
+    t = (deliverable_type or "").strip()
+    if d and t:
+        return f"{d} ({t})"
+    if d:
+        return d
+    if t:
+        return f"({t})"
+    return "-"
+
+
+def fetch_cover_image(cover_url: str, cache: Dict[str, Tuple[bytes, int, int] | None]) -> Tuple[bytes, int, int] | None:
+    url = (cover_url or "").strip()
+    if not url:
+        return None
+
+    if url in cache:
+        return cache[url]
+
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            cache[url] = None
+            return None
+
+        req = Request(url, headers={"User-Agent": "csv_to_slides/1.0"})
+        with urlopen(req, timeout=20) as resp:
+            data = resp.read()
+
+        with Image.open(BytesIO(data)) as img:
+            width, height = img.size
+
+        if width <= 0 or height <= 0:
+            cache[url] = None
+            return None
+
+        cache[url] = (data, width, height)
+        return cache[url]
+    except Exception:
+        cache[url] = None
+        return None
 
 
 def clean_html_text(raw: str | None) -> str:
@@ -287,7 +336,12 @@ def summarize_for_slide(text: str, max_words: int = 150, target_words: int = 145
     return summary
 
 
-def render_slide(prs: Presentation, row: Dict[str, str], logo_map: Dict[str, str]) -> None:
+def render_slide(
+    prs: Presentation,
+    row: Dict[str, str],
+    logo_map: Dict[str, str],
+    image_cache: Dict[str, Tuple[bytes, int, int] | None],
+) -> None:
     slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
 
     # Slide background
@@ -325,7 +379,10 @@ def render_slide(prs: Presentation, row: Dict[str, str], logo_map: Dict[str, str
     project_id = get_field(row, "Id", "ID", "id")
     title = get_field(row, "Title") or "(Untitled)"
     lens = html.unescape(get_field(row, "Associated Lance", "Associated Lens", "Lens")).strip() or "-"
-    deliverable = get_field(row, "Associated Deliverable", "Deliverable") or "-"
+    deliverable = get_field(row, "Associated Deliverable", "Deliverable")
+    deliverable_type = get_field(row, "Deliverable Type", "Type")
+    deliverable_text = format_deliverable(deliverable, deliverable_type)
+    cover_url = get_field(row, "Cover", "Image", "Cover URL")
     publication_date = parse_date(get_field(row, "Publication Date", "Date")) or "-"
     body = clean_html_text(get_field(row, "Text", "Description", "Body"))
 
@@ -367,7 +424,7 @@ def render_slide(prs: Presentation, row: Dict[str, str], logo_map: Dict[str, str
     p2 = tf_meta.add_paragraph()
     p2.space_after = Pt(2)
     add_styled_run(p2, "Associated Deliverable: ")
-    deliverable_run = add_styled_run(p2, deliverable, underline=True)
+    deliverable_run = add_styled_run(p2, deliverable_text, underline=True)
     if project_id:
         deliverable_run.hyperlink.address = f"https://guilds.reply.com/news/{project_id}"
 
@@ -400,22 +457,20 @@ def render_slide(prs: Presentation, row: Dict[str, str], logo_map: Dict[str, str
         p.space_after = Pt(5)
         p.alignment = PP_ALIGN.LEFT
 
-    # Right-side placeholder
+    # Right-side cover image area
     rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x_right, content_y, right_w, content_h)
     rect.fill.solid()
     rect.fill.fore_color.rgb = DARK_GRAY
     rect.line.color.rgb = MID_GRAY
 
-    tf_rect = rect.text_frame
-    tf_rect.clear()
-    tf_rect.vertical_anchor = MSO_ANCHOR.MIDDLE
-    p_rect = tf_rect.paragraphs[0]
-    p_rect.alignment = PP_ALIGN.CENTER
-    ph_run = p_rect.add_run()
-    ph_run.text = "Image Placeholder"
-    ph_run.font.size = Pt(18)
-    ph_run.font.bold = True
-    ph_run.font.color.rgb = LIGHT_GRAY
+    cover_image = fetch_cover_image(cover_url, image_cache)
+    if cover_image:
+        data, img_w, img_h = cover_image
+        off_x, off_y, fit_w, fit_h = fit_inside(right_w, content_h, img_w, img_h)
+        try:
+            slide.shapes.add_picture(BytesIO(data), x_right + off_x, content_y + off_y, fit_w, fit_h)
+        except Exception:
+            pass
 
 
 def iter_input_rows(input_path: str):
@@ -475,10 +530,11 @@ def convert(input_path: str, pptx_path: str) -> int:
     prs.slide_height = Inches(7.5)
 
     logo_map = load_logo_map()
+    image_cache: Dict[str, Tuple[bytes, int, int] | None] = {}
 
     count = 0
     for row in iter_input_rows(input_path):
-        render_slide(prs, row, logo_map)
+        render_slide(prs, row, logo_map, image_cache)
         count += 1
 
     if count == 0:

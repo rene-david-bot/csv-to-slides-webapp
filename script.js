@@ -12,6 +12,7 @@ const STOPWORDS = new Set([
 const tokenRegex = /[A-Za-zÀ-ÖØ-öø-ÿ0-9']+/g;
 const logoMapPromise = fetch('./assets/lance-logos/logo-map.json').then(r => r.ok ? r.json() : {}).catch(() => ({}));
 const logoDataCache = new Map();
+const coverDataCache = new Map();
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
@@ -75,6 +76,49 @@ async function resolveLogoData(lance) {
 
   logoDataCache.set(key, null);
   return null;
+}
+
+function formatDeliverableText(deliverable, deliverableType) {
+  const d = String(deliverable || '').trim();
+  const t = String(deliverableType || '').trim();
+  if (d && t) return `${d} (${t})`;
+  if (d) return d;
+  if (t) return `(${t})`;
+  return '-';
+}
+
+async function resolveCoverData(url) {
+  const src = String(url || '').trim();
+  if (!src || !/^https?:\/\//i.test(src)) return null;
+
+  if (coverDataCache.has(src)) return coverDataCache.get(src);
+
+  try {
+    const res = await fetch(src);
+    if (!res.ok) throw new Error(`cover fetch failed: ${res.status}`);
+
+    const blob = await res.blob();
+    const dataUri = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+    const dims = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth || img.width || 1, height: img.naturalHeight || img.height || 1 });
+      img.onerror = reject;
+      img.src = dataUri;
+    });
+
+    const out = { data: dataUri, width: dims.width, height: dims.height };
+    coverDataCache.set(src, out);
+    return out;
+  } catch {
+    coverDataCache.set(src, null);
+    return null;
+  }
 }
 
 function trimToWordLimit(text, maxWords = 145) {
@@ -315,7 +359,10 @@ async function generateDeck() {
       const projectId = pick(row, ['Id', 'ID', 'id']);
       const title = pick(row, ['Title']) || '(Untitled)';
       const lance = decodeHtmlEntities(pick(row, ['Associated Lance', 'Associated Lances', 'Associated Lens']) || '-').trim() || '-';
-      const deliverable = pick(row, ['Associated Deliverable', 'Deliverable']) || '-';
+      const deliverable = pick(row, ['Associated Deliverable', 'Deliverable']);
+      const deliverableType = pick(row, ['Deliverable Type', 'Type']);
+      const deliverableText = formatDeliverableText(deliverable, deliverableType);
+      const coverUrl = pick(row, ['Cover', 'Image', 'Cover URL']);
       const publicationDate = formatDate(pick(row, ['Publication Date', 'Date'])) || '-';
       const bodyRaw = cleanHtmlText(pick(row, ['Text', 'Description', 'Body']));
       const body = summarizeWholeText(bodyRaw, 145, 140);
@@ -367,7 +414,7 @@ async function generateDeck() {
       slide.addText([
         { text: 'Associated Deliverable: ', options: { color: 'CCCCCC', bold: false } },
         {
-          text: deliverable,
+          text: deliverableText,
           options: {
             color: 'CCCCCC',
             underline: { color: 'CCCCCC', style: 'sng' },
@@ -408,7 +455,7 @@ async function generateDeck() {
         lineSpacingMultiple: 1.2
       });
 
-      // Right placeholder
+      // Right cover image area
       slide.addShape(pptx.ShapeType.rect, {
         x: xRight,
         y: contentY,
@@ -418,17 +465,22 @@ async function generateDeck() {
         line: { color: '555555', pt: 1 }
       });
 
-      slide.addText('Image Placeholder', {
-        x: xRight,
-        y: contentY,
-        w: rightW,
-        h: contentH,
-        fontSize: 18,
-        bold: true,
-        color: 'CCCCCC',
-        align: 'center',
-        valign: 'mid'
-      });
+      const coverData = await resolveCoverData(coverUrl);
+      if (coverData?.data) {
+        const scale = Math.min(rightW / coverData.width, contentH / coverData.height);
+        const drawW = coverData.width * scale;
+        const drawH = coverData.height * scale;
+        const drawX = xRight + (rightW - drawW) / 2;
+        const drawY = contentY + (contentH - drawH) / 2;
+
+        slide.addImage({
+          data: coverData.data,
+          x: drawX,
+          y: drawY,
+          w: drawW,
+          h: drawH
+        });
+      }
     }
 
     const outName = sanitizeFilename(outputNameInput.value);
