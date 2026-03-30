@@ -27,7 +27,6 @@ from PIL import Image
 from openpyxl import load_workbook
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
 
@@ -35,8 +34,6 @@ from pptx.util import Inches, Pt
 BLACK = RGBColor(0x00, 0x00, 0x00)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 LIGHT_GRAY = RGBColor(0xCC, 0xCC, 0xCC)
-DARK_GRAY = RGBColor(0x33, 0x33, 0x33)
-MID_GRAY = RGBColor(0x55, 0x55, 0x55)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -458,11 +455,6 @@ def render_slide(
         p.alignment = PP_ALIGN.LEFT
 
     # Right-side cover image area
-    rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x_right, content_y, right_w, content_h)
-    rect.fill.solid()
-    rect.fill.fore_color.rgb = DARK_GRAY
-    rect.line.color.rgb = MID_GRAY
-
     cover_image = fetch_cover_image(cover_url, image_cache)
     if cover_image:
         data, img_w, img_h = cover_image

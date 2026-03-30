@@ -456,15 +456,6 @@ async function generateDeck() {
       });
 
       // Right cover image area
-      slide.addShape(pptx.ShapeType.rect, {
-        x: xRight,
-        y: contentY,
-        w: rightW,
-        h: contentH,
-        fill: { color: '333333' },
-        line: { color: '555555', pt: 1 }
-      });
-
       const coverData = await resolveCoverData(coverUrl);
       if (coverData?.data) {
         const scale = Math.min(rightW / coverData.width, contentH / coverData.height);
