@@ -13,6 +13,7 @@ const tokenRegex = /[A-Za-zÀ-ÖØ-öø-ÿ0-9']+/g;
 const logoMapPromise = fetch('./assets/lance-logos/logo-map.json').then(r => r.ok ? r.json() : {}).catch(() => ({}));
 const logoDataCache = new Map();
 const coverDataCache = new Map();
+const CORS_BLOCKED_IMAGE_HOSTS = new Set(['guilds-cdn.reply.com']);
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
@@ -89,38 +90,69 @@ function formatDeliverableText(deliverable, deliverableType, fallbackId) {
   return '-';
 }
 
+function buildCoverFetchCandidates(url) {
+  const src = String(url || '').trim();
+  if (!src || !/^https?:\/\//i.test(src)) return [];
+
+  try {
+    const parsed = new URL(src);
+    const host = parsed.host.toLowerCase();
+    const noScheme = `${host}${parsed.pathname}${parsed.search}`;
+    const proxied = `https://images.weserv.nl/?url=${encodeURIComponent(noScheme)}`;
+
+    if (CORS_BLOCKED_IMAGE_HOSTS.has(host)) return [proxied, src];
+    return [src, proxied];
+  } catch {
+    return [src];
+  }
+}
+
+async function fetchImageData(candidateUrl) {
+  const res = await fetch(candidateUrl);
+  if (!res.ok) throw new Error(`image fetch failed: ${res.status}`);
+
+  const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+  if (contentType && !contentType.startsWith('image/')) {
+    throw new Error(`image fetch returned non-image content: ${contentType}`);
+  }
+
+  const blob = await res.blob();
+  const dataUri = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+  const dims = await new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth || img.width || 1, height: img.naturalHeight || img.height || 1 });
+    img.onerror = reject;
+    img.src = dataUri;
+  });
+
+  return { data: dataUri, width: dims.width, height: dims.height };
+}
+
 async function resolveCoverData(url) {
   const src = String(url || '').trim();
   if (!src || !/^https?:\/\//i.test(src)) return null;
 
   if (coverDataCache.has(src)) return coverDataCache.get(src);
 
-  try {
-    const res = await fetch(src);
-    if (!res.ok) throw new Error(`cover fetch failed: ${res.status}`);
-
-    const blob = await res.blob();
-    const dataUri = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-
-    const dims = await new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve({ width: img.naturalWidth || img.width || 1, height: img.naturalHeight || img.height || 1 });
-      img.onerror = reject;
-      img.src = dataUri;
-    });
-
-    const out = { data: dataUri, width: dims.width, height: dims.height };
-    coverDataCache.set(src, out);
-    return out;
-  } catch {
-    coverDataCache.set(src, null);
-    return null;
+  const candidates = buildCoverFetchCandidates(src);
+  for (const candidate of candidates) {
+    try {
+      const out = await fetchImageData(candidate);
+      coverDataCache.set(src, out);
+      return out;
+    } catch {
+      // try next candidate
+    }
   }
+
+  coverDataCache.set(src, null);
+  return null;
 }
 
 function trimToWordLimit(text, maxWords = 145) {
@@ -357,6 +389,10 @@ async function generateDeck() {
     const contentY = margin + headerH + metaH + 0.12;
     const contentH = slideH - contentY - margin;
 
+    let coverRequested = 0;
+    let coverEmbedded = 0;
+    let coverFailed = 0;
+
     for (const row of rows) {
       const projectId = pick(row, ['Id', 'ID', 'id']);
       const title = pick(row, ['Title']) || '(Untitled)';
@@ -458,8 +494,10 @@ async function generateDeck() {
       });
 
       // Right cover image area
+      if (coverUrl) coverRequested += 1;
       const coverData = await resolveCoverData(coverUrl);
       if (coverData?.data) {
+        coverEmbedded += 1;
         const scale = Math.min(rightW / coverData.width, contentH / coverData.height);
         const drawW = coverData.width * scale;
         const drawH = coverData.height * scale;
@@ -473,13 +511,18 @@ async function generateDeck() {
           w: drawW,
           h: drawH
         });
+      } else if (coverUrl) {
+        coverFailed += 1;
       }
     }
 
     const outName = sanitizeFilename(outputNameInput.value);
     setStatus('Preparing download…');
     await pptx.writeFile({ fileName: outName });
-    setStatus(`Done. Generated ${rows.length} slide(s): ${outName}`);
+    const coverSummary = coverRequested
+      ? ` Embedded ${coverEmbedded}/${coverRequested} cover image(s)${coverFailed ? `, ${coverFailed} failed.` : '.'}`
+      : '';
+    setStatus(`Done. Generated ${rows.length} slide(s): ${outName}.${coverSummary}`);
   } catch (err) {
     console.error(err);
     setStatus(`Error: ${err.message || err}`, true);
