@@ -20,8 +20,14 @@ function setStatus(text, isError = false) {
   statusEl.style.color = isError ? '#ff8e8e' : '#a7a7a7';
 }
 
+function buildDefaultOutputFilename(date = new Date()) {
+  const month = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(date).toLowerCase();
+  const year = new Intl.DateTimeFormat('en-US', { year: 'numeric' }).format(date);
+  return `guilds_highlights_${month}_${year}.pptx`;
+}
+
 function sanitizeFilename(name) {
-  const base = (name || 'news-slides.pptx').trim().replace(/[^a-zA-Z0-9._-]/g, '-');
+  const base = (name || buildDefaultOutputFilename()).trim().replace(/[^a-zA-Z0-9._-]/g, '-');
   return base.toLowerCase().endsWith('.pptx') ? base : `${base}.pptx`;
 }
 
@@ -246,25 +252,67 @@ function cleanHtmlText(raw) {
   return text.trim();
 }
 
-function formatDate(value) {
-  if (!value) return '-';
+function parseDateValue(value) {
+  if (value === undefined || value === null) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+
   const raw = String(value).trim();
-  if (!raw) return '-';
+  if (!raw) return null;
 
   if (/^\d+(\.\d+)?$/.test(raw)) {
-    let num = Number(raw);
-    if (num > 1e12) num = num / 1000;
-    const d = new Date(num * 1000);
-    if (!Number.isNaN(d.getTime())) {
-      return new Intl.DateTimeFormat('en-US', { month: 'long', day: '2-digit', year: 'numeric' }).format(d);
+    const num = Number(raw);
+
+    if (num > 1e12) {
+      const d = new Date(num);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+
+    if (num > 1e9) {
+      const d = new Date(num * 1000);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+
+    if (num > 20000 && num < 100000) {
+      const excelEpochMs = Date.UTC(1899, 11, 30);
+      const d = new Date(excelEpochMs + num * 86400000);
+      if (!Number.isNaN(d.getTime())) return d;
     }
   }
 
   const d = new Date(raw);
-  if (!Number.isNaN(d.getTime())) {
-    return new Intl.DateTimeFormat('en-US', { month: 'long', day: '2-digit', year: 'numeric' }).format(d);
+  if (!Number.isNaN(d.getTime())) return d;
+  return null;
+}
+
+function formatDate(value) {
+  const parsed = parseDateValue(value);
+  if (parsed) {
+    return new Intl.DateTimeFormat('en-US', { month: 'long', day: '2-digit', year: 'numeric' }).format(parsed);
   }
-  return raw;
+
+  const raw = String(value || '').trim();
+  return raw || '-';
+}
+
+function sortRowsByPublicationDate(rows) {
+  return [...rows]
+    .map((row, index) => ({
+      row,
+      index,
+      date: parseDateValue(pick(row, ['Publication Date', 'Date']))
+    }))
+    .sort((a, b) => {
+      if (a.date && b.date) {
+        const diff = a.date.getTime() - b.date.getTime();
+        if (diff !== 0) return diff;
+      } else if (a.date && !b.date) {
+        return -1;
+      } else if (!a.date && b.date) {
+        return 1;
+      }
+      return a.index - b.index;
+    })
+    .map(item => item.row);
 }
 
 function summarizeWholeText(text, maxWords = 145, targetWords = 140) {
@@ -350,6 +398,14 @@ async function readRowsFromFile(file) {
   return XLSX.utils.sheet_to_json(ws, { defval: '' });
 }
 
+function applyDefaultOutputFilename() {
+  if (!outputNameInput) return;
+  const current = String(outputNameInput.value || '').trim();
+  if (!current || current === 'news-slides.pptx') {
+    outputNameInput.value = buildDefaultOutputFilename();
+  }
+}
+
 async function generateDeck() {
   const file = fileInput.files?.[0];
   if (!file) {
@@ -362,8 +418,9 @@ async function generateDeck() {
     setStatus('Reading input file…');
     const rows = await readRowsFromFile(file);
     if (!rows.length) throw new Error('No data rows found in file.');
+    const sortedRows = sortRowsByPublicationDate(rows);
 
-    setStatus(`Generating ${rows.length} slide(s)…`);
+    setStatus(`Generating ${sortedRows.length} slide(s) from oldest to newest…`);
 
     const pptx = new PptxGenJS();
     pptx.layout = 'LAYOUT_WIDE'; // 13.333 x 7.5
@@ -393,7 +450,7 @@ async function generateDeck() {
     let coverEmbedded = 0;
     let coverFailed = 0;
 
-    for (const row of rows) {
+    for (const row of sortedRows) {
       const projectId = pick(row, ['Id', 'ID', 'id']);
       const title = pick(row, ['Title']) || '(Untitled)';
       const lance = decodeHtmlEntities(pick(row, ['Associated Lance', 'Associated Lances', 'Associated Lens']) || '-').trim() || '-';
@@ -522,7 +579,7 @@ async function generateDeck() {
     const coverSummary = coverRequested
       ? ` Embedded ${coverEmbedded}/${coverRequested} cover image(s)${coverFailed ? `, ${coverFailed} failed.` : '.'}`
       : '';
-    setStatus(`Done. Generated ${rows.length} slide(s): ${outName}.${coverSummary}`);
+    setStatus(`Done. Generated ${sortedRows.length} slide(s): ${outName}.${coverSummary}`);
   } catch (err) {
     console.error(err);
     setStatus(`Error: ${err.message || err}`, true);
@@ -531,4 +588,5 @@ async function generateDeck() {
   }
 }
 
+applyDefaultOutputFilename();
 generateBtn.addEventListener('click', generateDeck);

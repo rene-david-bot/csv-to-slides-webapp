@@ -6,6 +6,7 @@ Web app to convert **CSV/XLSX** input into a downloadable **PPTX** deck (one row
 
 - Upload `.csv`, `.xls`, or `.xlsx`
 - One row -> one slide
+- Slides are ordered by publication date from oldest to newest
 - Dark theme slide template (16:9)
 - Full-width title, metadata block, body text, right-side cover image
 - Clickable deliverable hyperlink: `https://guilds.reply.com/news/[Id]`
@@ -29,6 +30,7 @@ Just open `index.html` in a browser.
 ## Deploy
 
 Push to `main` branch; GitHub Actions deploys to GitHub Pages.
+The default output file name is `guilds_highlights_<month>_<year>.pptx`.
 
 ## Notes on images
 
